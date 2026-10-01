@@ -1,0 +1,399 @@
+# Spec: Interactive Simple Calculator CLI
+
+**Status:** Implemented and validated on 2026-09-30.
+
+## Objective
+
+Build a persistent, line-oriented calculator in C++17. Launched without arguments, it explains the input format and how to quit, then repeatedly prompts for one calculation in the form `<left_operand> <operator> <right_operand>`. Each calculation is one line containing exactly three whitespace-separated tokens. It prints a result or a clear error and prompts again. Entering `q` or `Q` alone, or reaching EOF, exits successfully.
+
+Version 1 supports `+`, `-`, `*`, and `/` on finite `double` operands, uses only the standard library, and preserves the repository's small root-level layout and shell workflow.
+
+Success means a terminal user can perform multiple calculations in one process, recover from invalid input without restarting, understand how to quit, and run one command that validates the full implementation.
+
+## User Story
+
+As a terminal user,
+I want to perform multiple basic calculations in one session,
+So that I can get results quickly, recover from mistakes, and quit explicitly
+
+## Problem Statement
+
+The repository currently builds an empty program. It has no calculator behavior, interactive contract, reusable arithmetic core, or automated tests. The implementation needs a precise REPL protocol and a separately testable calculation API without unnecessary infrastructure.
+
+## Confirmed Interaction Contract
+
+- Launch `build/simple-calc` with no command-line arguments.
+- At startup, print guidance showing the input shape, supported operators, and that `q` or `Q` quits.
+- Before every input line, print and flush the prompt `> `.
+- Treat a trimmed line containing only `q` or `Q` as a successful quit.
+- Otherwise require exactly three whitespace-separated tokens on one line.
+- After valid input, print `= <result>` plus a newline and prompt again.
+- After a recoverable input or calculation error, print a concise `Error: ...` diagnostic to stderr and prompt again.
+- Treat EOF as normal session completion and exit `0`.
+- Reject command-line arguments before entering the REPL, print usage to stderr, and exit `2`.
+- Interactive errors do not terminate the process. Only invalid invocation has a nonzero process exit.
+
+Declare the exact startup guidance and diagnostics once in `main.cpp`; assert them in integration tests and reproduce them in the README.
+
+## Numeric and Result Contract
+
+- Operand tokens use locale-independent decimal syntax: optional leading `+` or `-`, digits with an optional decimal point, and an optional decimal exponent (`e` or `E`) with optional sign.
+- Require at least one digit. Accept forms such as `2`, `-0.5`, `.25`, `5.`, `+3`, and `6.02e23`.
+- Consume the complete token. Reject hexadecimal floats, separators, trailing characters, `nan`, and infinity spellings.
+- Parse with `std::from_chars` and `std::chars_format::general`; handle leading `+` explicitly because floating-point `from_chars` does not accept it. Reject invalid, out-of-range, partially consumed, and non-finite values.
+- The core independently rejects non-finite operands, unsupported operators, positive or negative zero division, and non-finite results. This duplication is intentional because callers can bypass the CLI.
+- Format finite results using `std::defaultfloat` and `std::setprecision(std::numeric_limits<double>::max_digits10)` for round-trip precision. Normalize either signed zero result to `0`.
+
+## Tech Stack
+
+- Language: C++17.
+- Compiler: `g++` with `-Wall -Wextra -Wpedantic -Werror`.
+- Runtime dependencies: C++ standard library only.
+- Test tooling: a dependency-free C++ unit-test executable plus Bash integration assertions.
+- Build tooling: direct compiler commands coordinated by `test_runner.sh`; no new build system or package manager.
+
+## Commands
+
+Run all commands from the repository root.
+
+```bash
+# Canonical build
+mkdir -p build
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror main.cpp calculator.cpp -o build/simple-calc
+
+# Interactive use
+build/simple-calc
+
+# Complete automated validation
+./test_runner.sh
+
+# Shell syntax and whitespace validation
+bash -n test_runner.sh
+git diff --check
+```
+
+## Project Structure
+
+```text
+main.cpp                   # CLI argument handling, REPL, parsing, formatting, and diagnostics
+calculator.hpp             # Public arithmetic API and documented exception contract
+calculator.cpp             # Arithmetic operations and independent core validation
+test_runner.sh             # Canonical build, unit-test, and interactive-test workflow
+tests/calculator_tests.cpp # Dependency-free arithmetic unit tests
+tests/README.md            # Test layout and contributor instructions
+README.md                  # User-facing build, interaction, and behavior documentation
+specs/                     # Reviewed feature specifications and implementation plans
+build/simple-calc          # Ignored canonical local executable generated by the build command
+```
+
+## Code Style
+
+Prefer small standard-library functions, explicit control flow, and clear names. Keep terminal concerns out of the arithmetic API. The intended public interface is:
+
+```cpp
+// calculator.hpp
+#pragma once
+
+double calculate(double left_operand, char operation, double right_operand);
+```
+
+- Use C++17 and compile without warnings under the canonical flags.
+- Use `snake_case` for variables and functions and descriptive operand names rather than abbreviations.
+- Keep parsing helpers private to `main.cpp` unless a demonstrated reuse case requires another module.
+- Use standard exceptions for the core contract; translate them into stable user-facing diagnostics at the REPL boundary.
+- Do not use global mutable state, decorators, external libraries, or speculative abstractions.
+
+## Boundaries
+
+- **Always:** validate complete input tokens; keep arithmetic separately unit-testable; recover after interactive errors; run `./test_runner.sh` and `git diff --check`; keep documentation synchronized with observable behavior.
+- **Ask first:** add operators or numeric forms; alter prompts, diagnostics, exit codes, or output formatting; add dependencies or a build system; broaden the calculator beyond the confirmed REPL.
+- **Never:** accept command-line calculations; silently ignore malformed input; terminate the session for a recoverable calculation error; commit generated binaries; weaken or remove a failing test merely to make validation pass.
+
+## Solution Statement
+
+Keep the REPL, line tokenization, numeric parsing, stream output, and process handling in `main.cpp`. Put arithmetic behind one function in `calculator.hpp` and `calculator.cpp`. Translate standard exceptions from the core into stable diagnostics at the interactive boundary. Build the canonical runnable binary at `build/simple-calc`; keep automated test binaries and captures in a temporary directory removed by `test_runner.sh`.
+
+## Relevant Files
+
+- `main.cpp` — argument validation, startup guidance, REPL, strict parsing, formatting, recovery, and exits.
+- `test_runner.sh` — isolated unit and interactive end-to-end runner.
+- `README.md` — canonical build, launch, interaction, numeric, result, error, quit, and test documentation.
+- `tests/README.md` — test layout and canonical validation command.
+
+### New Files
+
+- `calculator.hpp` — arithmetic API and exception contract.
+- `calculator.cpp` — operations and independent core validation.
+- `tests/calculator_tests.cpp` — dependency-free unit-test harness.
+
+## Implementation Plan
+
+### Phase 1: Arithmetic foundation
+
+Define and test the calculator function, then implement it independently of terminal I/O.
+
+### Phase 2: Interactive boundary
+
+Implement strict line parsing and the persistent REPL. Make input/calculation failures recoverable and reserve a nonzero exit for invalid invocation.
+
+### Phase 3: Integration and documentation
+
+Feed complete sessions through stdin in isolated tests, document the canonical workflow, and run final validation.
+
+### Dependency and sequencing notes
+
+- Tasks 1–4 are sequential because the tests and REPL depend on the arithmetic contract.
+- After Task 4 fixes observable behavior, integration-test work and documentation drafting may proceed in parallel, but both must be reconciled before final validation.
+- Checkpoints after the arithmetic core and interactive integration prevent interface drift from propagating into documentation.
+
+### Risks and mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Floating-point `std::from_chars` behavior differs across toolchains | Build or parsing failure | Require the repository compiler to pass focused accepted/rejected syntax tests before completing the REPL task. |
+| Prompts mixed with piped input make assertions brittle | False test failures | Define prompt/result text once, capture stdout and stderr separately, and match stable contract fragments. |
+| Errors accidentally end the REPL | Violates the core interaction requirement | Exercise an invalid line followed by a valid calculation in the same process for every error category. |
+| Temporary test artifacts leak into the repository | Dirty worktree and unreliable reruns | Use one validated `mktemp -d` path with an unconditional cleanup trap. |
+
+## Step-by-Step Tasks
+
+Execute every task in order.
+
+### Task 1: Define the calculator API
+
+- Add `calculator.hpp` with one function taking two `double` operands and an operator character and returning a `double`.
+- Document standard exception types for non-finite operands, unsupported operators, zero division, and non-finite results.
+- Keep parsing, streams, prompts, and process exits out of the API.
+
+**Acceptance criteria**
+
+- [ ] One clear entry point covers all four operators.
+- [ ] Every invalid core input/result has a documented exception.
+- [ ] Both `main.cpp` and unit tests can call it directly.
+
+**Verification**
+
+- [ ] A translation unit including the header compiles with strict C++17 warnings.
+- [ ] The header contains no CLI or stream concerns.
+
+**Files:** `calculator.hpp`
+
+### Task 2: Add arithmetic unit tests
+
+- Create `tests/calculator_tests.cpp` with a small harness that reports failures and exits nonzero.
+- Cover all operators, negative operands, fractional results, and tolerance comparison where needed.
+- Cover unsupported operators, both zero signs, non-finite operands, and overflow to a non-finite result.
+- Assert the documented exception type for each failure.
+
+**Acceptance criteria**
+
+- [ ] Every operation and documented validation branch has direct coverage.
+- [ ] Tests do not use terminal I/O or process launching.
+
+**Dependencies:** Task 1
+
+**Files:** `tests/calculator_tests.cpp`, `calculator.hpp`
+
+### Task 3: Implement the arithmetic core
+
+- Add `calculator.cpp` with explicit handling for all four operators.
+- Validate finite operands even though the CLI validates them.
+- Reject `0.0` and `-0.0` before division.
+- Reject any result for which `std::isfinite` is false.
+- Throw the documented exception; never choose a default operation.
+
+**Acceptance criteria**
+
+- [ ] Valid calculations return expected finite results.
+- [ ] Invalid direct calls obey the exception contract.
+- [ ] Core validation protects non-CLI callers.
+
+**Verification**
+
+```bash
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -I. tests/calculator_tests.cpp calculator.cpp -o /tmp/simple-calc-unit-tests
+/tmp/simple-calc-unit-tests
+```
+
+**Dependencies:** Tasks 1–2
+
+**Files:** `calculator.cpp`, `calculator.hpp`, `tests/calculator_tests.cpp`
+
+### Checkpoint: Arithmetic foundation
+
+- [ ] Strict compilation and direct arithmetic tests pass.
+- [ ] No REPL concerns are present in the core.
+
+### Task 4: Implement the interactive REPL
+
+- Reject arguments with usage on stderr and exit `2`.
+- Print startup guidance and enter the prompt/read/evaluate loop.
+- Read complete lines with `std::getline`; trim only for detecting `q`/`Q`, then tokenize calculations on whitespace.
+- Require exactly three tokens and one supported operator character.
+- Parse operands using the defined grammar and full-consumption `std::from_chars`.
+- Format results with the specified precision and zero normalization.
+- Catch expected failures, print stable stderr diagnostics, and continue.
+- Exit `0` on `q`, `Q`, or EOF.
+
+**Acceptance criteria**
+
+- [ ] Startup tells users the input form, operators, and quit commands.
+- [ ] `2 + 3`, `7 - 10`, `2.5 * 4`, and `7 / 2` work consecutively in one process.
+- [ ] Blank, incomplete, extra-token, malformed-number, invalid-operator, zero-division, and non-finite-result lines report an error and re-prompt.
+- [ ] Trimmed `q`/`Q` and EOF exit successfully.
+- [ ] Command-line operands are rejected, not ignored.
+
+**Verification**
+
+```bash
+mkdir -p build
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror main.cpp calculator.cpp -o build/simple-calc
+printf '2 + 3\n7 / 2\nq\n' | build/simple-calc
+printf 'bad + 2\n4 * 5\nQ\n' | build/simple-calc
+```
+
+**Dependencies:** Task 3
+
+**Files:** `main.cpp`, `calculator.hpp`
+
+### Task 5: Add isolated repeatable validation
+
+- Use `set -euo pipefail` and resolve repository paths independently of the caller's directory.
+- Create a directory with `mktemp -d`, install a trap that removes that exact directory, and build application/unit-test binaries there with strict C++17 flags.
+- Pipe multi-line sessions into the application.
+- Capture stdout, stderr, and status separately. Assert guidance, prompts, result formatting, diagnostics, recovery, and successful `q`, `Q`, and EOF exits.
+- Test arguments separately: status `2`, usage on stderr, and no REPL startup on stdout.
+- Cover every operator; accepted number forms; blank/incomplete/extra-token lines; partial, hexadecimal, out-of-range, and non-finite numbers; invalid/multi-character operators; both zero signs; non-finite results; and valid input after every error class.
+- Keep canonical `build/simple-calc` separate from temporary test artifacts. The runner leaves no binaries or captures behind.
+
+**Acceptance criteria**
+
+- [ ] `./test_runner.sh` runs all unit and interactive tests with warnings as errors.
+- [ ] Tests prove recovery inside the same process.
+- [ ] Stdout, stderr, and status are checked independently.
+- [ ] Cleanup occurs on success and failure.
+
+**Verification**
+
+```bash
+bash -n test_runner.sh
+./test_runner.sh
+```
+
+**Dependencies:** Task 4
+
+**Files:** `test_runner.sh`, `tests/calculator_tests.cpp`
+
+### Checkpoint: Complete interactive flow
+
+- [ ] One process handles multiple valid and invalid calculations.
+- [ ] Errors re-prompt; quit, EOF, and invalid invocation obey their exit contracts.
+- [ ] Tests leave no artifacts.
+
+### Task 6: Document user and contributor workflows
+
+- Document the canonical build command and `build/simple-calc`.
+- Document startup, three-token format, operators, numeric grammar, formatting, recovery, `q`/`Q`, and EOF.
+- Show a transcript with multiple calculations, an error, and quit. Explain that `*` needs no shell quoting inside the REPL.
+- Retain useful container instructions, updated for actual commands.
+- Point contributors to `./test_runner.sh` in `tests/README.md`.
+
+**Acceptance criteria**
+
+- [ ] A new user can build, launch, recover from an error, and quit from the README.
+- [ ] Documentation matches actual behavior and contains no positional-interface instructions.
+
+**Dependencies:** Task 5
+
+**Files:** `README.md`, `tests/README.md`
+
+### Task 7: Run final validation
+
+- Execute every validation command from the repository root.
+- Resolve warnings, failures, contract/documentation mismatches, and leaked artifacts.
+- Confirm the diff contains only this feature, tests, runner, and documentation.
+
+**Acceptance criteria**
+
+- [ ] All commands and acceptance criteria pass.
+- [ ] No generated binary or unrelated file is included.
+- [ ] A human approves the implementation.
+
+**Dependencies:** Task 6
+
+## Testing Strategy
+
+### Unit tests
+
+Call the arithmetic function directly and cover normal arithmetic plus every documented exception without parsing or process behavior.
+
+### Interactive integration tests
+
+Pipe full sessions into one process. Assert the observable stdout/stderr/status contract. At least one session must interleave valid input, each major recoverable error category, another valid calculation, and a quit command.
+
+### Edge cases
+
+- Unexpected command-line arguments.
+- `q`/`Q` with surrounding whitespace versus `q` inside a three-token line.
+- EOF immediately and after calculations.
+- Empty/whitespace-only, too-short, and too-long lines.
+- Integer, fraction, leading/trailing decimal point, signed, and exponent forms.
+- Partial, hexadecimal, separated, non-finite, and out-of-range numbers.
+- Negative second operands such as `4 - -2`.
+- Unsupported and multi-character operators.
+- Division by `0`, `0.0`, and `-0.0`.
+- Arithmetic overflow/non-finite results.
+- Values needing `max_digits10`, scientific notation, and signed-zero normalization.
+- Repeated calculations and valid input after errors.
+
+## Success Criteria
+
+- [ ] `build/simple-calc` starts the persistent REPL without arguments.
+- [ ] Guidance explains the three-token format, operators, and `q`/`Q`.
+- [ ] All four operations work with documented finite numbers.
+- [ ] Results obey the precision and zero contract.
+- [ ] Errors go to stderr and re-prompt without ending the session.
+- [ ] `q`, `Q`, and EOF exit `0`; arguments exit `2`.
+- [ ] The core is separately testable and independently validates inputs/results.
+- [ ] `./test_runner.sh` passes without artifacts.
+- [ ] Documentation matches the REPL.
+- [ ] No external dependency or build system is added.
+
+## Validation Commands
+
+```bash
+bash -n test_runner.sh
+./test_runner.sh
+mkdir -p build
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror main.cpp calculator.cpp -o build/simple-calc
+printf '2 + 3\n7 / 2\nq\n' | build/simple-calc
+printf '1 / 0\n4 * 5\nQ\n' | build/simple-calc >/tmp/simple-calc-stdout 2>/tmp/simple-calc-stderr
+grep -F '= 20' /tmp/simple-calc-stdout
+grep -F 'Error: division by zero' /tmp/simple-calc-stderr
+build/simple-calc unexpected >/tmp/simple-calc-stdout 2>/tmp/simple-calc-stderr; test "$?" -eq 2
+test ! -s /tmp/simple-calc-stdout
+grep -F 'Usage:' /tmp/simple-calc-stderr
+git diff --check
+git status --short
+```
+
+The implementation must keep startup text and diagnostics aligned across `main.cpp`, `test_runner.sh`, and `README.md`. Validation captures under `/tmp` are not repository artifacts.
+
+## Out of Scope
+
+- Positional command-line calculations or separate prompts per token.
+- Expression precedence, parentheses, history, memory, variables, or batch files.
+- Operators beyond `+`, `-`, `*`, and `/`.
+- Arbitrary precision or locale-specific numbers.
+- External libraries, package managers, or a new build system.
+
+## Open Questions
+
+None for version 1. The interaction model, quit behavior, numeric contract, result formatting, error recovery, executable location, and test boundary are resolved. Any change to these decisions must update this specification before implementation changes.
+
+## Notes
+
+- The confirmed product is a persistent interactive calculator, not a one-shot command.
+- The split arithmetic module remains because it offers a reusable contract and focused tests; its validation protects non-CLI callers.
+- Existing `.gitignore` excludes `build/`, so `build/simple-calc` is the canonical local output.
+- Implementation was authorized after the interaction contract and specification were approved.
